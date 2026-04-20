@@ -1,0 +1,6 @@
+@AspNetCore10.OpenTelemetry.Study_HostAddress = http://localhost:5027
+
+GET {{AspNetCore10.OpenTelemetry.Study_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
