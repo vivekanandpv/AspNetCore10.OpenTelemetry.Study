@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using AspNetCore10.OpenTelemetry.Study.Config;
 using AspNetCore10.OpenTelemetry.Study.DAL;
 using AspNetCore10.OpenTelemetry.Study.DTOs;
 using AspNetCore10.OpenTelemetry.Study.Models;
@@ -41,18 +43,37 @@ public class CustomerService : ICustomerService
     public async Task<CustomerDto> CreateCustomerAsync(CreateCustomerDto createCustomerDto)
     {
         _logger.LogInformation("Creating a new customer with Email: {CustomerEmail}.", createCustomerDto.Email);
-        var customer = new Customer
+        
+        using var activity = Telemetry.ActivitySource.StartActivity("customer.create");
+        activity?.AddTag("customer.email", createCustomerDto.Email);
+
+        try
         {
-            Name = createCustomerDto.Name,
-            Email = createCustomerDto.Email,
-            PhoneNumber = createCustomerDto.PhoneNumber
-        };
+            activity?.AddEvent(new ActivityEvent("customer.validation.start"));
+            var customer = new Customer
+            {
+                Name = createCustomerDto.Name,
+                Email = createCustomerDto.Email,
+                PhoneNumber = createCustomerDto.PhoneNumber
+            };
+            
+            activity?.AddEvent(new ActivityEvent("customer.validation.done"));
 
-        _context.Customers.Add(customer);
-        await _context.SaveChangesAsync();
-
-        _logger.LogInformation("Successfully created customer with ID: {CustomerId}.", customer.Id);
-        return new CustomerDto(customer.Id, customer.Name, customer.Email, customer.PhoneNumber);
+            _context.Customers.Add(customer);
+            await _context.SaveChangesAsync();
+            
+            activity?.SetTag("customer.id", customer.Id);
+            Telemetry.CustomersCreated.Add(1);
+            
+            _logger.LogInformation("Successfully created customer with ID: {CustomerId}.", customer.Id);
+            return new CustomerDto(customer.Id, customer.Name, customer.Email, customer.PhoneNumber);
+        }
+        catch (Exception e)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, e.Message);
+            activity?.AddException(e);
+            throw;
+        }
     }
 
     public async Task<bool> UpdateCustomerAsync(UpdateCustomerDto updateCustomerDto)
