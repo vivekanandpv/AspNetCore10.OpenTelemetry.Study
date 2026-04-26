@@ -54,7 +54,11 @@ public class Program
                 .AddAspNetCoreInstrumentation()
                 .AddHttpClientInstrumentation()
                 .AddRuntimeInstrumentation()
-                .AddOtlpExporter());
+                .AddOtlpExporter((exporterOptions, readerOptions) =>
+                {
+                    readerOptions.TemporalityPreference =
+                        MetricReaderTemporalityPreference.Delta;
+                }));
 
         var app = builder.Build();
 

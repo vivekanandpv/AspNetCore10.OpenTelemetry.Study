@@ -1,17 +1,17 @@
 services:
-  otel-collector:
-    image: otel/opentelemetry-collector-contrib:latest
-    ports:
-      - "4317:4317"
-      - "4318:4318"
-    volumes:
-      - ./otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml
-      - ./otel-output:/var/log/otel
-    depends_on:
-      - jaeger`
 
-  jaeger:
-    image: jaegertracing/all-in-one:latest
+  signoz:
+    image: signoz/signoz-standalone:latest
+    container_name: signoz
+    privileged: true
     ports:
-      - "16686:16686"   # Jaeger UI
-      - "4319:4317"
+      - "8080:8080"   # SigNoz UI
+      - "4317:4317"   # OTLP gRPC receiver
+      - "4318:4318"   # OTLP HTTP receiver
+    volumes:
+      - signoz-clickhouse:/var/lib/clickhouse
+      - signoz-data:/var/lib/signoz
+
+volumes:
+  signoz-clickhouse:
+  signoz-data:
