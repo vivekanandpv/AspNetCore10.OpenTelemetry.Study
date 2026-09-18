@@ -6,44 +6,92 @@ receivers:
       http:
         endpoint: 0.0.0.0:4318
 
+processors:
+  # Must be first in every pipeline: sheds load before it can build up
+  # elsewhere in the collector. GOMEMLIMIT below is set to ~80% of limit_mib,
+  # per upstream guidance.
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 400
+    spike_limit_mib: 80
+
+  # Promotes each log record's intrinsic trace/span id into attributes so
+  # they survive as Loki structured metadata — Grafana's Loki datasource
+  # links to Tempo by matching on the "trace_id" label name, which only
+  # exists if it's an attribute, not just the record's own trace context.
+  transform/logs:
+    log_statements:
+      - context: log
+        statements:
+          - set(attributes["trace_id"], trace_id.string) where trace_id.string != ""
+          - set(attributes["span_id"], span_id.string) where span_id.string != ""
+
+  # PII redaction. allow_all_keys keeps every standard http.*/db.*/etc.
+  # instrumentation attribute; only the two known-PII keys get hashed, plus
+  # an email-shaped value anywhere else as a defense-in-depth catch-all.
+  redaction:
+    allow_all_keys: true
+    # Matches both the span attribute spelling (customer.email) and the
+    # structured log attribute spelling from the ILogger message template
+    # (CustomerEmail).
+    blocked_key_patterns:
+      - "(?i)customer[._]?email"
+      - "(?i)customer[._]?phone[._]?number"
+    blocked_values:
+      - "[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}"
+    hash_function: sha3
+    summary: info
+
+  # Keep every error and every slow trace; thin out the rest. Errors and
+  # latency outliers are exactly what you want fully intact when debugging,
+  # while routine 200s add little beyond volume.
+  tail_sampling:
+    decision_wait: 10s
+    num_traces: 50000
+    policies:
+      - name: keep-errors
+        type: status_code
+        status_code:
+          status_codes: [ERROR]
+      - name: keep-slow-traces
+        type: latency
+        latency:
+          threshold_ms: 500
+      - name: sample-the-rest
+        type: probabilistic
+        probabilistic:
+          sampling_percentage: 10
+
+  batch: {}
+
 exporters:
-  debug:
-    verbosity: detailed
-
-  file/traces:
-    path: /var/log/otel/traces.json
-    rotation:
-      max_megabytes: 10
-      max_days: 7
-      max_backups: 3
-
-  file/metrics:
-    path: /var/log/otel/metrics.json
-    rotation:
-      max_megabytes: 10
-      max_days: 7
-      max_backups: 3
-
-  file/logs:
-    path: /var/log/otel/logs.json
-    rotation:
-      max_megabytes: 10
-      max_days: 7
-      max_backups: 3
-
-  otlp/jaeger:
-    endpoint: http://jaeger:4317
+  otlp_grpc/tempo:
+    endpoint: tempo:4317
     tls:
       insecure: true
 
+  otlp_http/loki:
+    endpoint: http://loki:3100/otlp
+
+  prometheus_remote_write:
+    endpoint: http://prometheus:9090/api/v1/write
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
 service:
+  extensions: [health_check]
   pipelines:
     traces:
-      receivers:  [otlp]
-      exporters:  [debug, file/traces, otlp/jaeger]
+      receivers: [otlp]
+      processors: [memory_limiter, redaction, tail_sampling, batch]
+      exporters: [otlp_grpc/tempo]
     metrics:
-      receivers:  [otlp]
-      exporters:  [debug, file/metrics]
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [prometheus_remote_write]
     logs:
-      receivers:  [otlp]
-      exporters:  [debug, file/logs]
+      receivers: [otlp]
+      processors: [memory_limiter, transform/logs, redaction, batch]
+      exporters: [otlp_http/loki]

@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s -o /dev/null -w \"GET / -> %{http_code}, redirected to: %{url_effective}\\\\n\" -L http://localhost:3000/)",
+      "Bash(curl -s http://localhost:3000/api/user)",
+      "Bash(python3 -m json.tool)"
+    ]
+  }
+}

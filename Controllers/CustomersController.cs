@@ -1,4 +1,5 @@
 using AspNetCore10.OpenTelemetry.Study.DTOs;
+using AspNetCore10.OpenTelemetry.Study.Exceptions;
 using AspNetCore10.OpenTelemetry.Study.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
@@ -43,9 +44,17 @@ public class CustomersController : ControllerBase
     public async Task<ActionResult<CustomerDto>> Create(CreateCustomerDto createCustomerDto)
     {
         _logger.LogInformation("HTTP POST request to create customer received for Email: {CustomerEmail}.", createCustomerDto.Email);
-        var customer = await _customerService.CreateCustomerAsync(createCustomerDto);
-        _logger.LogInformation("HTTP POST request succeeded. Created customer with ID: {CustomerId}.", customer.Id);
-        return CreatedAtAction(nameof(GetById), new { id = customer.Id }, customer);
+        try
+        {
+            var customer = await _customerService.CreateCustomerAsync(createCustomerDto);
+            _logger.LogInformation("HTTP POST request succeeded. Created customer with ID: {CustomerId}.", customer.Id);
+            return CreatedAtAction(nameof(GetById), new { id = customer.Id }, customer);
+        }
+        catch (DuplicateEmailException e)
+        {
+            _logger.LogWarning("HTTP POST request failed. Email: {CustomerEmail} is already in use.", createCustomerDto.Email);
+            return Conflict(new { message = e.Message });
+        }
     }
 
     [HttpPut("{id}")]

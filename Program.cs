@@ -14,6 +14,12 @@ public class Program
 {
     public static void Main(string[] args)
     {
+        // The OTLP gRPC exporter talks to the collector over plaintext (http://),
+        // but HttpClient refuses an h2c handshake unless this switch is set —
+        // without it, every export silently fails with "server did not complete
+        // the HTTP/2 handshake" and nothing reaches the collector.
+        AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.Http2UnencryptedSupport", true);
+
         var builder = WebApplication.CreateBuilder(args);
         
         // Add services to the container.
@@ -34,7 +40,11 @@ public class Program
         {
             logging.SetResourceBuilder(
                 ResourceBuilder.CreateDefault().AddService("AspNetCore10.OpenTelemetry.Study"));
-            logging.IncludeFormattedMessage = true;
+            // Keep the rendered message out of the log body — structured
+            // attributes (e.g. CustomerEmail) already carry the values, and
+            // that's the only place the collector's redaction processor can
+            // reach them. A fully-rendered body would leak PII as free text.
+            logging.IncludeFormattedMessage = false;
             logging.IncludeScopes = true;
             logging.AddOtlpExporter();      // same endpoint picked up from OTEL_EXPORTER_OTLP_ENDPOINT
         });
@@ -54,6 +64,9 @@ public class Program
                 .AddAspNetCoreInstrumentation()
                 .AddHttpClientInstrumentation()
                 .AddRuntimeInstrumentation()
+                // Exemplars link a metric data point back to the trace that produced it.
+                // TraceBased attaches one whenever a sampled Activity is active during recording.
+                .SetExemplarFilter(ExemplarFilterType.TraceBased)
                 .AddOtlpExporter());
 
         var app = builder.Build();

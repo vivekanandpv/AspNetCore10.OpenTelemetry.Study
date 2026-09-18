@@ -14,7 +14,9 @@ public class AppDbContext : DbContext
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
-        
+
+        modelBuilder.Entity<Customer>().HasIndex(c => c.Email).IsUnique();
+
         modelBuilder.Entity<Customer>().HasData(
             new Customer { Id = 1, Name = "Alice Johnson", Email = "alice.johnson@example.com", PhoneNumber = "555-0101" },
             new Customer { Id = 2, Name = "Bob Smith", Email = "bob.smith@example.com", PhoneNumber = "555-0102" },
