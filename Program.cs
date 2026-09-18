@@ -14,6 +14,12 @@ public class Program
 {
     public static void Main(string[] args)
     {
+        // The OTLP gRPC exporter talks to the collector over plaintext (http://),
+        // but HttpClient refuses an h2c handshake unless this switch is set —
+        // without it, every export silently fails with "server did not complete
+        // the HTTP/2 handshake" and nothing reaches SigNoz.
+        AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.Http2UnencryptedSupport", true);
+
         var builder = WebApplication.CreateBuilder(args);
         
         // Add services to the container.
@@ -54,6 +60,9 @@ public class Program
                 .AddAspNetCoreInstrumentation()
                 .AddHttpClientInstrumentation()
                 .AddRuntimeInstrumentation()
+                // Exemplars link a metric data point back to the trace that produced it.
+                // TraceBased attaches one whenever a sampled Activity is active during recording.
+                .SetExemplarFilter(ExemplarFilterType.TraceBased)
                 .AddOtlpExporter((exporterOptions, readerOptions) =>
                 {
                     readerOptions.TemporalityPreference =

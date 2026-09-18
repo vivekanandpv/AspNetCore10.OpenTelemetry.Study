@@ -22,30 +22,43 @@ public class CustomerService : ICustomerService
     public async Task<IEnumerable<CustomerDto>> GetAllCustomersAsync()
     {
         _logger.LogInformation("Getting all customers from the database.");
-        return await _context.Customers
+        using var activity = Telemetry.ActivitySource.StartActivity("customer.get_all");
+        var stopwatch = Stopwatch.StartNew();
+
+        var customers = await _context.Customers
             .Select(c => new CustomerDto(c.Id, c.Name, c.Email, c.PhoneNumber))
             .ToListAsync();
+
+        RecordDuration("get_all", stopwatch.Elapsed.TotalMilliseconds);
+        return customers;
     }
 
     public async Task<CustomerDto?> GetCustomerByIdAsync(int id)
     {
         _logger.LogInformation("Searching for customer with ID: {CustomerId}.", id);
+        using var activity = Telemetry.ActivitySource.StartActivity("customer.get_by_id");
+        activity?.SetTag("customer.id", id);
+        var stopwatch = Stopwatch.StartNew();
+
         var customer = await _context.Customers.FindAsync(id);
         if (customer == null)
         {
             _logger.LogWarning("Customer with ID: {CustomerId} was not found.", id);
+            RecordDuration("get_by_id", stopwatch.Elapsed.TotalMilliseconds, found: false);
             return null;
         }
 
+        RecordDuration("get_by_id", stopwatch.Elapsed.TotalMilliseconds);
         return new CustomerDto(customer.Id, customer.Name, customer.Email, customer.PhoneNumber);
     }
 
     public async Task<CustomerDto> CreateCustomerAsync(CreateCustomerDto createCustomerDto)
     {
         _logger.LogInformation("Creating a new customer with Email: {CustomerEmail}.", createCustomerDto.Email);
-        
+
         using var activity = Telemetry.ActivitySource.StartActivity("customer.create");
         activity?.AddTag("customer.email", createCustomerDto.Email);
+        var stopwatch = Stopwatch.StartNew();
 
         try
         {
@@ -56,15 +69,16 @@ public class CustomerService : ICustomerService
                 Email = createCustomerDto.Email,
                 PhoneNumber = createCustomerDto.PhoneNumber
             };
-            
+
             activity?.AddEvent(new ActivityEvent("customer.validation.done"));
 
             _context.Customers.Add(customer);
             await _context.SaveChangesAsync();
-            
+
             activity?.SetTag("customer.id", customer.Id);
             Telemetry.CustomersCreated.Add(1);
-            
+            RecordDuration("create", stopwatch.Elapsed.TotalMilliseconds);
+
             _logger.LogInformation("Successfully created customer with ID: {CustomerId}.", customer.Id);
             return new CustomerDto(customer.Id, customer.Name, customer.Email, customer.PhoneNumber);
         }
@@ -72,6 +86,7 @@ public class CustomerService : ICustomerService
         {
             activity?.SetStatus(ActivityStatusCode.Error, e.Message);
             activity?.AddException(e);
+            RecordDuration("create", stopwatch.Elapsed.TotalMilliseconds, success: false);
             throw;
         }
     }
@@ -79,10 +94,15 @@ public class CustomerService : ICustomerService
     public async Task<bool> UpdateCustomerAsync(UpdateCustomerDto updateCustomerDto)
     {
         _logger.LogInformation("Updating customer with ID: {CustomerId}.", updateCustomerDto.Id);
+        using var activity = Telemetry.ActivitySource.StartActivity("customer.update");
+        activity?.SetTag("customer.id", updateCustomerDto.Id);
+        var stopwatch = Stopwatch.StartNew();
+
         var customer = await _context.Customers.FindAsync(updateCustomerDto.Id);
         if (customer == null)
         {
             _logger.LogWarning("Failed to update customer. Customer with ID: {CustomerId} was not found.", updateCustomerDto.Id);
+            RecordDuration("update", stopwatch.Elapsed.TotalMilliseconds, found: false);
             return false;
         }
 
@@ -91,6 +111,7 @@ public class CustomerService : ICustomerService
         customer.PhoneNumber = updateCustomerDto.PhoneNumber;
 
         await _context.SaveChangesAsync();
+        RecordDuration("update", stopwatch.Elapsed.TotalMilliseconds);
         _logger.LogInformation("Successfully updated customer with ID: {CustomerId}.", updateCustomerDto.Id);
         return true;
     }
@@ -98,16 +119,32 @@ public class CustomerService : ICustomerService
     public async Task<bool> DeleteCustomerAsync(int id)
     {
         _logger.LogInformation("Deleting customer with ID: {CustomerId}.", id);
+        using var activity = Telemetry.ActivitySource.StartActivity("customer.delete");
+        activity?.SetTag("customer.id", id);
+        var stopwatch = Stopwatch.StartNew();
+
         var customer = await _context.Customers.FindAsync(id);
         if (customer == null)
         {
             _logger.LogWarning("Failed to delete customer. Customer with ID: {CustomerId} was not found.", id);
+            RecordDuration("delete", stopwatch.Elapsed.TotalMilliseconds, found: false);
             return false;
         }
 
         _context.Customers.Remove(customer);
         await _context.SaveChangesAsync();
+        Telemetry.CustomersDeleted.Add(1);
+        RecordDuration("delete", stopwatch.Elapsed.TotalMilliseconds);
         _logger.LogInformation("Successfully deleted customer with ID: {CustomerId}.", id);
         return true;
+    }
+
+    private static void RecordDuration(string operation, double elapsedMs, bool success = true, bool found = true)
+    {
+        Telemetry.CustomerOperationDuration.Record(
+            elapsedMs,
+            new KeyValuePair<string, object?>("operation", operation),
+            new KeyValuePair<string, object?>("success", success),
+            new KeyValuePair<string, object?>("found", found));
     }
 }
